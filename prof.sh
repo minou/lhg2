@@ -1,0 +1,115 @@
+#!/bin/bash
+#########################################################################################################################
+# Script bash permettant de déposer une archive sur l'application prof de l'université de Lille 1			#
+#															#
+# Alias pour git : git config --global alias.prof									#
+#    '!f() { git archive --format=tar.gz --prefix=firstname_lastname_ --output=firstname_lastname_$1.tar.gz master $1;	#
+#    prof.sh --upload $(basename $(git rev-parse --show-toplevel)) firstname_lastname_$1.tar.gz; }; f'			#
+#															#
+# Cas non géré par le script :												#
+#    - plusieurs rendus ouverts pour la même matière									#
+#															#
+#########################################################################################################################
+
+URL="https://prof.fil.univ-lille1.fr"
+LOGIN="login"
+PASSWORD="password"
+
+DIRECTORY="${HOME}"
+COOKIE="${DIRECTORY}/cookie.txt"
+VERBOSE=0
+
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+COLOR_NONE="\e[0m"
+
+usage()
+{
+	echo "usage: $0"
+	echo -e "\t-u, --upload subject archive [-v|--verbose]"
+	echo -e "\t-h, --help"
+	exit 0
+}
+
+print_error()
+{
+	echo -e "[${RED} KO ${COLOR_NONE}] $1"
+}
+
+print_info()
+{
+	[ $VERBOSE -eq 1 ] && echo -e "[INFO] $1"
+}
+
+print_ok()
+{
+	echo -e "[${GREEN} OK ${COLOR_NONE}] $1"
+}
+
+upload()
+{
+	if [ "${LOGIN}" = "login" ] || [ "${PASSWORD}" = "password" ]; then
+		print_error "Veuillez modifier les variables LOGIN et PASSWORD"
+		exit 1
+	fi
+
+	SUBJECT="$1"
+	ARCHIVE="$2"
+
+	# Récupération des cookies
+	curl --silent --request GET --cookie-jar ${COOKIE} "${URL}/index.php" > /dev/null
+
+	# Authentification
+	ERROR=$(curl --silent --request POST --cookie ${COOKIE} --cookie-jar ${COOKIE} --data "login=${LOGIN}" --data "passwd=${PASSWORD}" "${URL}/login.php" | grep -c "Erreur: Login inexistant ou mot de passe invalide")
+	if [ "${ERROR}" -eq 0 ]; then
+		print_info "Authentification réussie"
+	else
+		print_error "Authentification échouée"
+		exit 1
+	fi
+
+	# Récupération du numéro de la matière
+	SUBJECT_NUMBER=$(curl --silent --request GET --cookie ${COOKIE} --cookie-jar ${COOKIE} "${URL}/select_projet.php" | sed -n "s/.*VALUE=\"\([0-9]*\)\">${SUBJECT}.*/\1/Ip")
+	if [ -z ${SUBJECT_NUMBER} ]; then
+		print_error "La matière ${SUBJECT} n'existe pas sur l'application prof"
+		exit 1
+	fi
+
+	# Récupération du nombre de rendus ouverts en même temps
+	NUMBER_REPOSITORIES=$(curl --silent --request POST --cookie ${COOKIE} --cookie-jar ${COOKIE} --data "id_projet=${SUBJECT_NUMBER}" "${URL}/main.php" | grep -c "<td align=center>Ouvert</td>.*")
+	if [ ${NUMBER_REPOSITORIES} -eq 1 ]; then
+		# Récupération de l'action à effectuer et de l'id pour la page upload.php
+		read ACTION UPLOAD_NUMBER < <(curl --silent --request POST --cookie ${COOKIE} --cookie-jar ${COOKIE} --data "id_projet=${SUBJECT_NUMBER}" "${URL}/main.php" | grep -o "<td align=center>Ouvert</td>.*" | sed -n "s/.*href=\(upload\|delete\).php?id=\([0-9]*\).*/\1 \2/p")
+	else
+		print_error "Plusieurs rendus sont ouverts pour la matière ${SUBJECT}. Cas non géré par le script"
+		exit 1
+	fi
+
+	# Suppression de l'ancien fichier
+	if [ "${ACTION}" = "delete" ]; then
+		curl --silent --request GET --cookie ${COOKIE} --cookie-jar ${COOKIE} "${URL}/delete.php?id=${UPLOAD_NUMBER}" > /dev/null && \
+			curl --silent --request GET --cookie ${COOKIE} --cookie-jar ${COOKIE} "${URL}/delete.php?action=delete&id=${UPLOAD_NUMBER}" > /dev/null && \
+			print_info "L'ancien fichier a été supprimé"
+	fi
+
+	# Envoi de l'archive
+	curl --silent --request GET --cookie ${COOKIE} --cookie-jar ${COOKIE} "${URL}/upload.php?id=${UPLOAD_NUMBER}" > /dev/null && \
+		curl --silent --request POST --cookie ${COOKIE} --form "MAX_FILE_SIZE=10000000" --form "submit=DÉPOSER" --form "fichier1=@${ARCHIVE}" "${URL}/upload2.php" > /dev/null
+
+	# Récupération des informations
+	read DATE TIME ARCHIVE < <(curl --silent --request POST --cookie ${COOKIE} --cookie-jar ${COOKIE} --data "id_projet=${SUBJECT_NUMBER}" "${URL}/main.php" | grep -o "<td align=center>Ouvert</td>.*" | sed -n "s/.*Le\ \([0-9,\/]*\)-\([0-9,:]*\)\ (\(.*\)).*/\1 \2 \3/p")
+	print_ok "Le fichier ${ARCHIVE} a été déposé le ${DATE} à ${TIME}"
+
+	# Suppression du fichier qui a permis de stocker les cookies
+	rm -f ${COOKIE}
+}
+
+while [ $# -gt 0 ]
+do
+	case $1 in
+		"-h"|"--help") usage ;;
+		"-v"|"--verbose") VERBOSE=1; shift ;;
+		"-u"|"-up"|"--up"|"--upload") upload $2 $3; shift; shift; shift ;;
+		*) usage ;;
+	esac
+done
