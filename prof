@@ -4,7 +4,7 @@
 #															#
 # Alias pour git : git config --global alias.prof									#
 #    '!f() { git archive --format=tar.gz --prefix=firstname_lastname_ --output=firstname_lastname_$1.tar.gz master $1;	#
-#    prof.sh --upload $(basename $(git rev-parse --show-toplevel)) firstname_lastname_$1.tar.gz; }; f'			#
+#    prof --upload $(basename $(git rev-parse --show-toplevel)) firstname_lastname_$1.tar.gz; }; f'			#
 #															#
 # Cas non géré par le script :												#
 #    - plusieurs rendus ouverts pour la même matière									#
